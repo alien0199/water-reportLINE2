@@ -1,36 +1,75 @@
-name: Generate and Post Water Report
+name: Generate and Post Water Report to LINE
 
 on:
   schedule:
-    - cron: '0 1 * * *'   # 08:00 ICT
-    - cron: '0 5 * * *'   # 12:00 ICT
-    - cron: '0 11 * * *'  # 18:00 ICT
-    - cron: '30 13 * * *' # 20:30 ICT
+    # Run at 08:00 ICT (01:00 UTC)
+    - cron: '0 1 * * *'
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     env:
+      # ใช้ LINE Secrets ที่ตั้งค่าไว้
+      LINE_CHANNEL_ACCESS_TOKEN: ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}
+      LINE_TARGET_ID: ${{ secrets.LINE_TARGET_ID }}
+      # OPENWEATHER_API_KEY ยังคงต้องใช้สำหรับดึงข้อมูลสภาพอากาศ
       OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-      MAKE_WEBHOOK_URL: ${{ secrets.MAKE_WEBHOOK_URL }}
+
     steps:
+      # 1. Checkout a copy of your repository
       - uses: actions/checkout@v4
+
+      # 2. Set up Python environment
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      # 3. Install required Python packages
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # 4. Run your main script to generate the report image and status text
       - name: Run script to generate image and status
         run: python main.py
 
-      # --- ไม่ต้องมีขั้นตอน Read caption อีกต่อไป ---
+      # 5. Commit the generated files back to the repository
+      #    ขั้นตอนนี้สำคัญเพื่อให้ LINE API สามารถเข้าถึงรูปภาพผ่าน URL ได้
+      - name: Commit report image and status
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Auto-update final_report.jpg and status.txt"
+          file_pattern: "final_report.jpg status.txt"
+          commit_user_name: "GitHub Actions Bot"
+          commit_user_email: "actions@github.com"
+          commit_author: "GitHub Actions Bot <actions@github.com>"
 
-      # ✨ แก้ไขขั้นตอนการส่งข้อมูลให้ดึงจากไฟล์โดยตรง ✨
-      - name: Send to Make Webhook
+
+      # 6. Send notification to LINE
+      - name: Send to LINE Messaging API
         run: |
-          curl -X POST \
-          -F "file=@final_report.jpg" \
-          -F "status=<status.txt" \
-          "${{ secrets.MAKE_WEBHOOK_URL }}"
+          # อ่านข้อความสถานะจากไฟล์ และปรับ format สำหรับ JSON
+          STATUS_MESSAGE=$(cat status.txt | awk '{printf "%s\\n", $0}' | sed 's/"/\\"/g')
+
+          # สร้าง URL แบบสาธารณะของรูปภาพจากใน repo (เพิ่ม timestamp เพื่อกันปัญหา cache)
+          IMAGE_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/final_report.jpg?t=$(date +%s)"
+
+          # ส่งข้อความและรูปภาพไปที่ LINE Messaging API Push
+          curl -X POST https://api.line.me/v2/bot/message/push \
+          -H "Content-Type: application/json" \
+          -H "Authorization: Bearer ${{ secrets.LINE_CHANNEL_ACCESS_TOKEN }}" \
+          -d '{
+                "to": "${{ secrets.LINE_TARGET_ID }}",
+                "messages": [
+                  {
+                    "type": "image",
+                    "originalContentUrl": "'"$IMAGE_URL"'",
+                    "previewImageUrl": "'"$IMAGE_URL"'"
+                  },
+                  {
+                    "type": "text",
+                    "text": "'"$STATUS_MESSAGE"'"
+                  }
+                ]
+              }'
