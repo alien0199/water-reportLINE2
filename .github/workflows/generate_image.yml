@@ -2,8 +2,8 @@ name: Generate and Post Water Report to LINE
 
 on:
   schedule:
-    # Run at 08:00 ICT (01:00 UTC)
-    - cron: '0 1 * * *'
+    - cron: '0 1 * * *'  # UTC เวลา 8:00 น. (UTC+7)
+    - cron: '0 10 * * *' # UTC เวลา 17:00 น. (UTC+7)
   workflow_dispatch:
 
 jobs:
